@@ -3,12 +3,14 @@ package filer
 import (
 	"archive/zip"
 	"bytes"
+	"io"
 	"io/fs"
 	"io/ioutil"
 	"os"
 	xpath "path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -151,11 +153,42 @@ func (filer gitFiler) ReadFile(path string) ([]byte, error) {
 	}
 	defer func() { err = reader.Close() }()
 
+	checkBinaryBuf := make([]byte, 1024)
+	lr := io.LimitReader(reader, 1024)
+
+	if _, err := lr.Read(checkBinaryBuf); err != nil {
+		return nil, errors.Wrapf(err, "cannot read file %s", path)
+	}
+
+	if !IsText(checkBinaryBuf) {
+		return nil, errors.Errorf("file %s is binary, skip", path)
+	}
+
 	buf := new(bytes.Buffer)
 	if _, err = buf.ReadFrom(reader); err != nil {
 		return nil, errors.Wrapf(err, "cannot read file %s", path)
 	}
 	return buf.Bytes(), err
+}
+
+// IsText reports whether a significant prefix of s looks like correct UTF-8;
+// that is, if it is likely that s is human-readable text.
+func IsText(s []byte) bool {
+	const max = 1024 // at least utf8.UTFMax
+	if len(s) > max {
+		s = s[0:max]
+	}
+	for i, c := range string(s) {
+		if i+utf8.UTFMax > len(s) {
+			// last char may be incomplete - ignore
+			break
+		}
+		if c == 0xFFFD || c < ' ' && c != '\n' && c != '\t' && c != '\f' {
+			// decoding error or control character - not a text file
+			return false
+		}
+	}
+	return true
 }
 
 func (filer *gitFiler) ReadDir(path string) ([]File, error) {
