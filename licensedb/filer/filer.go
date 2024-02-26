@@ -151,24 +151,29 @@ func (filer gitFiler) ReadFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "cannot read file %s", path)
 	}
-	defer func() { err = reader.Close() }()
+	defer func() { _ = reader.Close() }()
 
 	checkBinaryBuf := make([]byte, 1024)
 	lr := io.LimitReader(reader, 1024)
 
-	if _, err := lr.Read(checkBinaryBuf); err != nil {
+	n, err := lr.Read(checkBinaryBuf)
+	if err != nil && err != io.EOF {
 		return nil, errors.Wrapf(err, "cannot read file %s", path)
 	}
 
-	if !IsText(checkBinaryBuf) {
+	if !IsText(checkBinaryBuf[:n]) {
 		return nil, errors.Errorf("file %s is binary, skip", path)
 	}
 
 	buf := new(bytes.Buffer)
+	// Write the bytes read for checking back into the buffer
+	buf.Write(checkBinaryBuf[:n])
+
+	// Read the rest of the file
 	if _, err = buf.ReadFrom(reader); err != nil {
 		return nil, errors.Wrapf(err, "cannot read file %s", path)
 	}
-	return buf.Bytes(), err
+	return buf.Bytes(), nil
 }
 
 // IsText reports whether a significant prefix of s looks like correct UTF-8;
